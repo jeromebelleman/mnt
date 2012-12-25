@@ -7,7 +7,9 @@ import optparse
 import shlex
 import re
 import errno 
+
 UNLOSETUP = '/sbin/losetup -d %s'
+UNCRYPTSETUP = '/sbin/cryptsetup luksClose %s'
 
 class ExecError(Exception):
     pass
@@ -81,14 +83,21 @@ def main():
             print
             return 1
 
-        # FIXME Finish handling rewind on error graciously
-
         # Create a mount point
         mp = '/media/%s' % basefile
         try:
             os.mkdir(mp)
         except OSError, e:
             print >>sys.stderr, '[mkdir] %s: %s' % (e.strerror, e.filename)
+            try:
+                # Device-unmap loop device
+                ex(UNCRYPTSETUP % basefile)
+
+                # Detach loop device
+                ex(UNLOSETUP % loopdev)
+            except ExecError, e:
+                print >>sys.stderr, e
+
             return 1
 
         try:
@@ -96,6 +105,20 @@ def main():
             ex('/bin/mount /dev/mapper/%s %s' % (basefile, mp))
         except ExecError, e:
             print >>sys.stderr, e
+            try:
+                # Remove mount point
+                os.rmdir(mp)
+
+                # Device-unmap loop device
+                ex(UNCRYPTSETUP % basefile)
+
+                # Detach loop device
+                ex(UNLOSETUP % loopdev)
+            except ExecError, e:
+                print >>sys.stderr, e
+            except OSError, e:
+                print >>sys.stderr, '[rmdir] %s: %s' % (e.strerror, e.filename)
+
             return 1
 
     # Umount Actions
@@ -132,8 +155,8 @@ def main():
             return 1
 
         try:
-            # Device-map loop device
-            ex('/sbin/cryptsetup luksClose %s' % basefile)
+            # Device-unmap loop device
+            ex(UNCRYPTSETUP % basefile)
         except ExecError, e:
             print >>sys.stderr, e
             return 1
