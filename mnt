@@ -37,7 +37,7 @@ def main():
         parser.print_help()
         return
 
-    # Sanitize input
+    # Sanitise input
     exists = True
     for o in options.file, options.mountpoint:
         if o and not os.path.exists(o):
@@ -49,11 +49,12 @@ def main():
 
     # Mount Actions
     if options.file:
-        # FIXME Case where /dev/loop0 is already taken
-        loopdev = '/dev/loop0'
         basefile = os.path.basename(os.path.abspath(options.file))
 
         try:
+            # Find first unused loop device
+            loopdev, _ = ex('/sbin/losetup -f')
+
             # Attach loop device
             ex('/sbin/losetup %s %s' % (loopdev, options.file))
         except ExecError, e:
