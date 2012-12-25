@@ -1,0 +1,148 @@
+#! /usr/bin/env python
+
+import os
+import sys
+import subprocess as sp
+import optparse
+import shlex
+import re
+import errno 
+UNLOSETUP = '/sbin/losetup -d %s'
+
+class ExecError(Exception):
+    pass
+
+def ex(cmd):
+    args = shlex.split(cmd)
+    try:
+        p = sp.Popen(args, stdout=sp.PIPE, stderr=sp.PIPE)
+    except KeyboardInterrupt:
+        return
+    stdout, stderr = p.communicate()
+    if p.returncode != 0:
+        out = stderr if len(stderr) > 0 else stdout
+        raise ExecError('[%s] %s' % (os.path.basename(args[0]), out[:-1]))
+    return stdout, stderr
+
+def main():
+    # Arguments
+    parser = optparse.OptionParser()
+    help = "mount FILE's filesystem"
+    parser.add_option('-m', '--mount', dest='file', help=help)
+    help = "umount filesystem from MOUNTPOINT"
+    parser.add_option('-u', '--umount', dest='mountpoint', help=help)
+    (options, args) = parser.parse_args()
+
+    if not options.file and not options.mountpoint:
+        parser.print_help()
+        return
+
+    # Sanitize input
+    exists = True
+    for o in options.file, options.mountpoint:
+        if o and not os.path.exists(o):
+            strerr = os.strerror(errno.ENOENT)
+            print >>sys.stderr, '%s: %s' % (o, strerr)
+            exists = False
+    if not exists:
+        return 1
+
+    # Mount Actions
+    if options.file:
+        # FIXME Case where /dev/loop0 is already taken
+        loopdev = '/dev/loop0'
+        basefile = os.path.basename(os.path.abspath(options.file))
+
+        try:
+            # Attach loop device
+            ex('/sbin/losetup %s %s' % (loopdev, options.file))
+        except ExecError, e:
+            print >>sys.stderr, e
+            return 1
+
+        try:
+            # Device-map loop device
+            ex('/sbin/cryptsetup -T 1 luksOpen %s %s' % (loopdev, basefile))
+        except ExecError, e:
+            print >>sys.stderr, e
+            try:
+                # Detach loop device
+                ex(UNLOSETUP % loopdev)
+            except:
+                print >>sys.stderr, e
+            return 1
+        except KeyboardInterrupt:
+            try:
+                # Detach loop device
+                ex(UNLOSETUP % loopdev)
+            except ExecError, e:
+                print >>sys.stderr, e
+            print
+            return 1
+
+        # FIXME Finish handling rewind on error graciously
+
+        # Create a mount point
+        mp = '/media/%s' % basefile
+        try:
+            os.mkdir(mp)
+        except OSError, e:
+            print >>sys.stderr, '[mkdir] %s: %s' % (e.strerror, e.filename)
+            return 1
+
+        try:
+            # Mount now decrypted file system
+            ex('/bin/mount /dev/mapper/%s %s' % (basefile, mp))
+        except ExecError, e:
+            print >>sys.stderr, e
+            return 1
+
+    # Umount Actions
+    if options.mountpoint:
+        basefile = os.path.basename(os.path.abspath(options.mountpoint))
+
+        # Find out which loop device we're dealing with
+        try:
+            stdout, _ = ex('/sbin/cryptsetup status %s' % basefile)
+        except ExecError, e:
+            print >>sys.stderr, e
+            return 1
+        r = re.compile('.*  device:  (?P<loopdev>/dev/loop\d+).*', re.S)
+        m = r.match(stdout)
+        if m is not None:
+            loopdev = m.group('loopdev')
+        else:
+            msg = "No loop device seems to be mapped to %s"
+            print >>sys.stderr, msg % basefile
+            return 1
+
+        try:
+            # Umount now decrypted file system
+            ex('/bin/umount %s' % options.mountpoint)
+        except ExecError, e:
+            print >>sys.stderr, e
+            return 1
+
+        # Remove mount point
+        try:
+            os.rmdir(options.mountpoint)
+        except OSError, e:
+            print >>sys.stderr, '[rmdir] %s: %s' % (e.strerror, e.filename)
+            return 1
+
+        try:
+            # Device-map loop device
+            ex('/sbin/cryptsetup luksClose %s' % basefile)
+        except ExecError, e:
+            print >>sys.stderr, e
+            return 1
+
+        try:
+            # Detach loop device
+            ex(UNLOSETUP % loopdev)
+        except ExecError, e:
+            print >>sys.stderr, e
+            return 1
+
+if __name__ == '__main__':
+    sys.exit(main())
