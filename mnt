@@ -3,7 +3,7 @@
 import os
 import sys
 import subprocess as sp
-import optparse
+import argparse
 import shlex
 import re
 import errno 
@@ -28,37 +28,39 @@ def ex(cmd):
 
 def main():
     # Arguments
-    parser = optparse.OptionParser()
+    parser = argparse.ArgumentParser()
     help = "mount FILE's filesystem"
-    parser.add_option('-m', '--mount', dest='file', help=help)
+    parser.add_argument('-m', '--mount', dest='file', nargs='+', help=help,
+                        default=[])
     help = "umount filesystem from MOUNTPOINT"
-    parser.add_option('-u', '--umount', dest='mountpoint', help=help)
-    (options, args) = parser.parse_args()
+    parser.add_argument('-u', '--umount', dest='mountpoint', nargs='+',
+                        help=help, default=[])
+    args = parser.parse_args()
 
-    if not options.file and not options.mountpoint:
+    if not args.file and not args.mountpoint:
         parser.print_help()
         return
 
     # Sanitise input
     exists = True
-    for o in options.file, options.mountpoint:
-        if o and not os.path.exists(o):
+    for i in args.file + args.mountpoint:
+        if not os.path.exists(i):
             strerr = os.strerror(errno.ENOENT)
-            print >>sys.stderr, '%s: %s' % (o, strerr)
+            print >>sys.stderr, '%s: %s' % (i, strerr)
             exists = False
     if not exists:
         return 1
 
     # Mount Actions
-    if options.file:
-        basefile = os.path.basename(os.path.abspath(options.file))
+    for i in args.file:
+        basefile = os.path.basename(os.path.abspath(i))
 
         try:
             # Find first unused loop device
             loopdev, _ = ex('/sbin/losetup -f')
 
             # Attach loop device
-            ex('/sbin/losetup %s %s' % (loopdev, options.file))
+            ex('/sbin/losetup %s %s' % (loopdev, i))
         except ExecError, e:
             print >>sys.stderr, e
             return 1
@@ -122,8 +124,8 @@ def main():
             return 1
 
     # Umount Actions
-    if options.mountpoint:
-        basefile = os.path.basename(os.path.abspath(options.mountpoint))
+    for i in args.mountpoint:
+        basefile = os.path.basename(os.path.abspath(i))
 
         # Find out which loop device we're dealing with
         try:
@@ -142,14 +144,14 @@ def main():
 
         try:
             # Umount now decrypted file system
-            ex('/bin/umount %s' % options.mountpoint)
+            ex('/bin/umount %s' % i)
         except ExecError, e:
             print >>sys.stderr, e
             return 1
 
         # Remove mount point
         try:
-            os.rmdir(options.mountpoint)
+            os.rmdir(i)
         except OSError, e:
             print >>sys.stderr, '[rmdir] %s: %s' % (e.strerror, e.filename)
             return 1
