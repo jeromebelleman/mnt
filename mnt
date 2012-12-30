@@ -7,6 +7,7 @@ import argparse
 import shlex
 import re
 import errno 
+from getpass import getpass
 
 UNLOSETUP = '/sbin/losetup -d %s'
 UNCRYPTSETUP = '/sbin/cryptsetup luksClose %s'
@@ -14,13 +15,13 @@ UNCRYPTSETUP = '/sbin/cryptsetup luksClose %s'
 class ExecError(Exception):
     pass
 
-def ex(cmd):
+def ex(cmd, input=None):
     args = shlex.split(cmd)
     try:
-        p = sp.Popen(args, stdout=sp.PIPE, stderr=sp.PIPE)
+        p = sp.Popen(args, stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.PIPE)
     except KeyboardInterrupt:
         return
-    stdout, stderr = p.communicate()
+    stdout, stderr = p.communicate(input)
     if p.returncode != 0:
         out = stderr if len(stderr) > 0 else stdout
         raise ExecError('[%s] %s' % (os.path.basename(args[0]), out[:-1]))
@@ -52,6 +53,7 @@ def main():
         return 1
 
     # Mount Actions
+    passphrase = None
     for i, f in enumerate(args.file):
         if len(args.file) > 1:
             basefile = os.path.basename(os.path.abspath(f)) + str(i)
@@ -69,8 +71,13 @@ def main():
             return 1
 
         try:
+            # Prompt and store passphrase
+            if not passphrase:
+                passphrase = getpass('Enter passphrase for %s: ' % basefile)
+
             # Device-map loop device
-            ex('/sbin/cryptsetup -T 1 luksOpen %s %s' % (loopdev, basefile))
+            ex('/sbin/cryptsetup -T 1 -d - luksOpen %s %s' % \
+                (loopdev, basefile), passphrase)
         except ExecError, e:
             print >>sys.stderr, e
             try:
