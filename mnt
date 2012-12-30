@@ -52,15 +52,18 @@ def main():
         return 1
 
     # Mount Actions
-    for i in args.file:
-        basefile = os.path.basename(os.path.abspath(i))
+    for i, f in enumerate(args.file):
+        if len(args.file) > 1:
+            basefile = os.path.basename(os.path.abspath(f)) + str(i)
+        else:
+            basefile = os.path.basename(os.path.abspath(f))
 
         try:
             # Find first unused loop device
             loopdev, _ = ex('/sbin/losetup -f')
 
             # Attach loop device
-            ex('/sbin/losetup %s %s' % (loopdev, i))
+            ex('/sbin/losetup %s %s' % (loopdev, f))
         except ExecError, e:
             print >>sys.stderr, e
             return 1
@@ -124,8 +127,8 @@ def main():
             return 1
 
     # Umount Actions
-    for i in args.mountpoint:
-        basefile = os.path.basename(os.path.abspath(i))
+    for f in args.mountpoint:
+        basefile = os.path.basename(os.path.abspath(f))
 
         # Find out which loop device we're dealing with
         try:
@@ -144,14 +147,14 @@ def main():
 
         try:
             # Umount now decrypted file system
-            ex('/bin/umount %s' % i)
+            ex('/bin/umount %s' % f)
         except ExecError, e:
             print >>sys.stderr, e
             return 1
 
         # Remove mount point
         try:
-            os.rmdir(i)
+            os.rmdir(f)
         except OSError, e:
             print >>sys.stderr, '[rmdir] %s: %s' % (e.strerror, e.filename)
             return 1
