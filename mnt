@@ -1,19 +1,91 @@
 #! /usr/bin/env python
 
 import os
+from os.path import dirname, expanduser
 import sys
 import subprocess as sp
 import argparse
 import shlex
+import cmd
 import re
 import errno 
 from getpass import getpass
 
 UNLOSETUP = '/sbin/losetup -d %s'
 UNCRYPTSETUP = '/sbin/cryptsetup luksClose %s'
+MHELP = "mount FILE's filesystem"
+UHELP = "umount filesystem from MOUNTPOINT"
 
 class ExecError(Exception):
     pass
+
+class Cli(cmd.Cmd):
+    def __init__(self):
+        cmd.Cmd.__init__(self)
+        self.prompt = 'mnt% '
+
+        self.pm = argparse.ArgumentParser()
+        self.pm.add_argument(dest='file', nargs='+', help=MHELP)
+
+        self.pu = argparse.ArgumentParser()
+        self.pu.add_argument(dest='mountpoint', nargs='+', help=UHELP)
+
+        self.passphrase = None
+
+    def emptyline(self):
+        pass
+
+    def do_mount(self, line):
+        try:
+            args = self.pm.parse_args(shlex.split(line))
+        except SystemExit:
+            return
+        self.passphrase = mount(args.file, self.passphrase)
+
+    def complete_mount(self, text, line, begidx, endidx):
+        # For some reason 'text' drops words by slash
+        # FIXME Complete from current word rather than last word
+        args = shlex.split(line)
+        if len(args) > 1:
+            path = dirname(args[-1]) if dirname(args[-1]) else '.'
+            return [e for e in os.listdir(expanduser(path))
+                    if e.startswith(text)]
+        else:
+            return [e for e in os.listdir('.')]
+
+    def help_mount(self):
+       self.pm.print_help() 
+
+    def do_umount(self, line):
+        try:
+            args = self.pu.parse_args(shlex.split(line))
+        except SystemExit:
+            return
+        umount(args.mountpoint)
+
+    def complete_umount(self, text, line, begidx, endidx):
+        # For some reason 'text' drops words by slash
+        # FIXME Complete from current word rather than last word
+        args = shlex.split(line)
+        if len(args) > 1:
+            path = dirname(args[-1]) if dirname(args[-1]) else '.'
+            return [e for e in os.listdir(expanduser(path))
+                    if e.startswith(text)]
+        else:
+            return ['/media/' + e for e in os.listdir('/media')]
+
+    def help_umount(self):
+       self.pu.print_help() 
+
+    def do_EOF(self, _):
+        print
+        sys.exit(0)
+
+    def help_EOF(self):
+        print "Exit"
+
+    def help_help(self):
+        print "Display help"
 
 def ex(cmd, input=None):
     args = shlex.split(cmd)
@@ -27,35 +99,9 @@ def ex(cmd, input=None):
         raise ExecError('[%s] %s' % (os.path.basename(args[0]), out[:-1]))
     return stdout, stderr
 
-def main():
-    # Arguments
-    parser = argparse.ArgumentParser()
-    help = "mount FILE's filesystem"
-    parser.add_argument('-m', '--mount', dest='file', nargs='+', help=help,
-                        default=[])
-    help = "umount filesystem from MOUNTPOINT"
-    parser.add_argument('-u', '--umount', dest='mountpoint', nargs='+',
-                        help=help, default=[])
-    args = parser.parse_args()
-
-    if not args.file and not args.mountpoint:
-        parser.print_help()
-        return
-
-    # Sanitise input
-    exists = True
-    for i in args.file + args.mountpoint:
-        if not os.path.exists(i):
-            strerr = os.strerror(errno.ENOENT)
-            print >>sys.stderr, '%s: %s' % (i, strerr)
-            exists = False
-    if not exists:
-        return 1
-
-    # Mount Actions
-    passphrase = None
-    for i, f in enumerate(args.file):
-        if len(args.file) > 1:
+def mount(files, passphrase=None):
+    for i, f in enumerate([expanduser(f) for f in files]):
+        if len(files) > 1:
             basefile = os.path.basename(os.path.abspath(f)) + str(i)
         else:
             basefile = os.path.basename(os.path.abspath(f))
@@ -68,7 +114,7 @@ def main():
             ex('/sbin/losetup %s %s' % (loopdev, f))
         except ExecError, e:
             print >>sys.stderr, e
-            return 1
+            return
 
         try:
             # Prompt and store passphrase
@@ -85,7 +131,7 @@ def main():
                 ex(UNLOSETUP % loopdev)
             except:
                 print >>sys.stderr, e
-            return 1
+            return
         except KeyboardInterrupt:
             try:
                 # Detach loop device
@@ -93,7 +139,7 @@ def main():
             except ExecError, e:
                 print >>sys.stderr, e
             print
-            return 1
+            return
 
         # Create a mount point
         mp = '/media/%s' % basefile
@@ -110,7 +156,7 @@ def main():
             except ExecError, e:
                 print >>sys.stderr, e
 
-            return 1
+            return
 
         try:
             # Mount now decrypted file system
@@ -131,10 +177,12 @@ def main():
             except OSError, e:
                 print >>sys.stderr, '[rmdir] %s: %s' % (e.strerror, e.filename)
 
-            return 1
+            return
 
-    # Umount Actions
-    for f in args.mountpoint:
+    return passphrase
+
+def umount(mountpoints):
+    for f in mountpoints:
         basefile = os.path.basename(os.path.abspath(f))
 
         # Find out which loop device we're dealing with
@@ -179,6 +227,40 @@ def main():
         except ExecError, e:
             print >>sys.stderr, e
             return 1
+
+def main():
+    # Arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-m', '--mount', dest='file', nargs='+', help=MHELP,
+                        default=[])
+    parser.add_argument('-u', '--umount', dest='mountpoint', nargs='+',
+                        help=UHELP, default=[])
+    args = parser.parse_args()
+
+    # Start shell if no arguments
+    if not args.file and not args.mountpoint:
+        cli = Cli()
+        while True:
+            try:
+                cli.cmdloop()
+            except KeyboardInterrupt:
+                print
+
+    # Sanitise input
+    exists = True
+    for i in args.file + args.mountpoint:
+        if not os.path.exists(i):
+            strerr = os.strerror(errno.ENOENT)
+            print >>sys.stderr, '%s: %s' % (i, strerr)
+            exists = False
+    if not exists:
+        return 1
+
+    # Mount Actions
+    mount(args.file)
+
+    # Umount Actions
+    umount(args.mountpoint)
 
 if __name__ == '__main__':
     sys.exit(main())
