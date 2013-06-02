@@ -20,6 +20,17 @@ UHELP = "umount filesystem from MOUNTPOINT"
 class ExecError(Exception):
     pass
 
+def filetype(path, e):
+    if os.path.isdir(expanduser(path + '/' + e)):
+        return e + '/'
+    else:
+        return e
+
+def filecomp(args, text):
+    path = dirname(args[-1]) if dirname(args[-1]) else '.'
+    return [filetype(path, e) for e in os.listdir(expanduser(path))
+            if e.startswith(text)]
+
 class Cli(cmd.Cmd):
     def __init__(self):
         cmd.Cmd.__init__(self)
@@ -53,9 +64,7 @@ class Cli(cmd.Cmd):
         # FIXME Complete from current word rather than last word
         args = shlex.split(line)
         if len(args) > 1:
-            path = dirname(args[-1]) if dirname(args[-1]) else '.'
-            return [e for e in os.listdir(expanduser(path))
-                    if e.startswith(text)]
+            return filecomp(args, text)
         else:
             return [e for e in os.listdir('.')]
 
@@ -74,9 +83,7 @@ class Cli(cmd.Cmd):
         # FIXME Complete from current word rather than last word
         args = shlex.split(line)
         if len(args) > 1:
-            path = dirname(args[-1]) if dirname(args[-1]) else '.'
-            return [e for e in os.listdir(expanduser(path))
-                    if e.startswith(text)]
+            return filecomp(args, text)
         else:
             return ['/media/' + e for e in os.listdir('/media')]
 
