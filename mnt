@@ -15,6 +15,7 @@ from getpass import getpass
 UNLOSETUP = '/sbin/losetup -d %s'
 UNCRYPTSETUP = '/sbin/cryptsetup luksClose %s'
 MHELP = "mount FILE's filesystem"
+RHELP = "mount filesystem read-only"
 UHELP = "umount filesystem from MOUNTPOINT"
 
 class ExecError(Exception):
@@ -38,6 +39,8 @@ class Cli(cmd.Cmd):
 
         self.pm = argparse.ArgumentParser()
         self.pm.add_argument(dest='file', nargs='+', help=MHELP)
+        self.pm.add_argument('-r', '--read-only', action='store_true',
+                             help=RHELP)
 
         self.pu = argparse.ArgumentParser()
         self.pu.add_argument(dest='mountpoint', nargs='+', help=UHELP)
@@ -56,7 +59,7 @@ class Cli(cmd.Cmd):
             args = self.pm.parse_args(shlex.split(line))
         except SystemExit:
             return
-        self.passphrase = mount(args.file, self.passphrase)
+        self.passphrase = mount(args.file, args.read_only, self.passphrase)
         signal.alarm(60 * 60) # Forget passphrase after 1 hour
 
     def complete_mount(self, text, line, begidx, endidx):
@@ -112,7 +115,7 @@ def ex(cmd, input=None):
         raise ExecError('[%s] %s' % (os.path.basename(args[0]), out[:-1]))
     return stdout, stderr
 
-def mount(files, passphrase=None):
+def mount(files, read_only, passphrase=None):
     for i, f in enumerate([expanduser(f) for f in files]):
         if len(files) > 1:
             basefile = os.path.basename(os.path.abspath(f)) + str(i)
@@ -173,7 +176,8 @@ def mount(files, passphrase=None):
 
         try:
             # Mount now decrypted file system
-            ex('/bin/mount /dev/mapper/%s %s' % (basefile, mp))
+            ro = '-r' if read_only else ''
+            ex('/bin/mount %s /dev/mapper/%s %s' % (ro, basefile, mp))
         except ExecError, e:
             print >>sys.stderr, e
             try:
@@ -246,6 +250,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--mount', dest='file', nargs='+', help=MHELP,
                         default=[])
+    parser.add_argument('-r', '--read-only', action='store_true', help=RHELP)
     parser.add_argument('-u', '--umount', dest='mountpoint', nargs='+',
                         help=UHELP, default=[])
     args = parser.parse_args()
@@ -270,7 +275,7 @@ def main():
         return 1
 
     # Mount Actions
-    mount(args.file)
+    mount(args.file, args.read_only)
 
     # Umount Actions
     umount(args.mountpoint)
