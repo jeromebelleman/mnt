@@ -9,6 +9,7 @@ import shlex
 import cmd
 import re
 import errno 
+import signal
 from getpass import getpass
 
 UNLOSETUP = '/sbin/losetup -d %s'
@@ -31,6 +32,10 @@ class Cli(cmd.Cmd):
         self.pu.add_argument(dest='mountpoint', nargs='+', help=UHELP)
 
         self.passphrase = None
+        signal.signal(signal.SIGALRM, self.handler)
+
+    def handler(self, signum, frame):
+        self.passphrase = None
 
     def emptyline(self):
         pass
@@ -41,6 +46,7 @@ class Cli(cmd.Cmd):
         except SystemExit:
             return
         self.passphrase = mount(args.file, self.passphrase)
+        signal.alarm(60 * 60) # Forget passphrase after 1 hour
 
     def complete_mount(self, text, line, begidx, endidx):
         # For some reason 'text' drops words by slash
