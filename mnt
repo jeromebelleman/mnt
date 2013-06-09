@@ -11,6 +11,7 @@ import re
 import errno 
 import signal
 from getpass import getpass
+import itertools
 
 UNLOSETUP = '/sbin/losetup -d %s'
 CRYPTSETUP = '/sbin/cryptsetup -T 1 -d - luksOpen %s %s'
@@ -190,10 +191,13 @@ def ex(cmd, input=None):
 
 def mount(files, read_only, passphrase=None):
     for i, f in enumerate([expanduser(f) for f in files]):
-        if len(files) > 1:
-            basefile = os.path.basename(os.path.abspath(f)) + str(i)
-        else:
-            basefile = os.path.basename(os.path.abspath(f))
+        # Set unique basefile 
+        basefile = os.path.basename(os.path.abspath(f))
+        j, suffix = 0, ''
+        while os.path.isdir('/media/%s%s' % (basefile, suffix)):
+            suffix = str(j)
+            j += 1
+        basefile = basefile + suffix
 
         try:
             loopdev = losetup(f)
