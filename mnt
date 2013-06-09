@@ -106,6 +106,10 @@ class Cli(cmd.Cmd):
         self.pu = argparse.ArgumentParser()
         self.pu.add_argument(dest='mountpoint', nargs='+', help=UHELP)
 
+        self.pc = argparse.ArgumentParser(description=CHELP)
+        self.pc.add_argument(dest='file')
+        self.pc.add_argument(dest='size')
+
         self.passphrase = None
         signal.signal(signal.SIGALRM, self.handler)
 
@@ -153,6 +157,14 @@ class Cli(cmd.Cmd):
 
     def help_umount(self):
        self.pu.print_help() 
+
+    def do_create(self, line):
+        try:
+            args = self.pc.parse_args(shlex.split(line))
+        except SystemExit:
+            return
+        self.passphrase = create(args.file, args.size, self.passphrase)
+        signal.alarm(60 * 60) # Forget passphrase after 1 hour
 
     def do_EOF(self, _):
         print
