@@ -13,13 +13,74 @@ import signal
 from getpass import getpass
 
 UNLOSETUP = '/sbin/losetup -d %s'
+CRYPTSETUP = '/sbin/cryptsetup -T 1 -d - luksOpen %s %s'
 UNCRYPTSETUP = '/sbin/cryptsetup luksClose %s'
 MHELP = "mount FILE's filesystem"
 RHELP = "mount filesystem read-only"
 UHELP = "umount filesystem from MOUNTPOINT"
+CHELP = "create SIZE MB filesystem in FILE"
 
 class ExecError(Exception):
     pass
+
+class CryptError(Exception):
+    pass
+
+def mkmp(basefile, loopdev):
+    mp = '/media/%s' % basefile
+    try:
+        # Create a mount point
+        os.mkdir(mp)
+    except OSError, e:
+        print >>sys.stderr, '[mkdir] %s: %s' % (e.strerror, e.filename)
+        try:
+            # Device-unmap loop device
+            ex(UNCRYPTSETUP % basefile)
+
+            # Detach loop device
+            ex(UNLOSETUP % loopdev)
+        except ExecError, e:
+            print >>sys.stderr, e
+
+        raise CryptError
+
+    return mp
+
+def mntfs(basefile, loopdev, mp, read_only=False):
+    try:
+        # Mount the now decrypted file system
+        ro = '-r' if read_only else ''
+        ex('/bin/mount %s /dev/mapper/%s %s' % (ro, basefile, mp))
+    except ExecError, e:
+        print >>sys.stderr, e
+        try:
+            # Remove mount point
+            os.rmdir(mp)
+
+            # Device-unmap loop device
+            ex(UNCRYPTSETUP % basefile)
+
+            # Detach loop device
+            ex(UNLOSETUP % loopdev)
+        except ExecError, e:
+            print >>sys.stderr, e
+        except OSError, e:
+            print >>sys.stderr, '[rmdir] %s: %s' % (e.strerror, e.filename)
+
+        raise CryptError
+
+def losetup(path):
+    try:
+        # Find first unused loop device
+        loopdev, _ = ex('/sbin/losetup -f')
+
+        # Attach loop device
+        ex('/sbin/losetup %s %s' % (loopdev, path))
+    except ExecError, e:
+        print >>sys.stderr, e
+        raise CryptError
+
+    return loopdev
 
 def filetype(path, e):
     if os.path.isdir(expanduser(path + '/' + e)):
@@ -123,13 +184,8 @@ def mount(files, read_only, passphrase=None):
             basefile = os.path.basename(os.path.abspath(f))
 
         try:
-            # Find first unused loop device
-            loopdev, _ = ex('/sbin/losetup -f')
-
-            # Attach loop device
-            ex('/sbin/losetup %s %s' % (loopdev, f))
-        except ExecError, e:
-            print >>sys.stderr, e
+            loopdev = losetup(f)
+        except CryptError:
             return
 
         try:
@@ -138,8 +194,7 @@ def mount(files, read_only, passphrase=None):
                 passphrase = getpass('Enter passphrase for %s: ' % basefile)
 
             # Device-map loop device
-            ex('/sbin/cryptsetup -T 1 -d - luksOpen %s %s' % \
-                (loopdev, basefile), passphrase)
+            ex(CRYPTSETUP % (loopdev, basefile), passphrase)
         except ExecError, e:
             print >>sys.stderr, e
             try:
@@ -157,43 +212,14 @@ def mount(files, read_only, passphrase=None):
             print
             return
 
-        # Create a mount point
-        mp = '/media/%s' % basefile
         try:
-            os.mkdir(mp)
-        except OSError, e:
-            print >>sys.stderr, '[mkdir] %s: %s' % (e.strerror, e.filename)
-            try:
-                # Device-unmap loop device
-                ex(UNCRYPTSETUP % basefile)
-
-                # Detach loop device
-                ex(UNLOSETUP % loopdev)
-            except ExecError, e:
-                print >>sys.stderr, e
-
+            mp = mkmp(basefile, loopdev)
+        except CryptError:
             return
 
         try:
-            # Mount now decrypted file system
-            ro = '-r' if read_only else ''
-            ex('/bin/mount %s /dev/mapper/%s %s' % (ro, basefile, mp))
-        except ExecError, e:
-            print >>sys.stderr, e
-            try:
-                # Remove mount point
-                os.rmdir(mp)
-
-                # Device-unmap loop device
-                ex(UNCRYPTSETUP % basefile)
-
-                # Detach loop device
-                ex(UNLOSETUP % loopdev)
-            except ExecError, e:
-                print >>sys.stderr, e
-            except OSError, e:
-                print >>sys.stderr, '[rmdir] %s: %s' % (e.strerror, e.filename)
-
+            mntfs(basefile, loopdev, mp, read_only)
+        except CryptError:
             return
 
     return passphrase
@@ -218,7 +244,7 @@ def umount(mountpoints):
             return 1
 
         try:
-            # Umount now decrypted file system
+            # Umount file system
             ex('/bin/umount %s' % f)
         except ExecError, e:
             print >>sys.stderr, e
@@ -245,6 +271,71 @@ def umount(mountpoints):
             print >>sys.stderr, e
             return 1
 
+def create(path, size, passphrase=None):
+    try:
+        # Fill new file with random data
+        ex('/bin/dd if=/dev/urandom of=%s bs=1M count=%d' % (path, int(size)))
+    except ExecError, e:
+        print >>sys.stderr, e
+        return
+
+    try:
+        loopdev = losetup(path)
+    except CryptError:
+        return
+
+    basefile = os.path.basename(os.path.abspath(path))
+
+    try:
+        # Prompt and store passphrase
+        if not passphrase:
+            passphrase = getpass('Enter passphrase for %s: ' % basefile)
+
+        # Initialise LUKS partition
+        ex('/sbin/cryptsetup -d - luksFormat %s' % loopdev, passphrase)
+
+        # Device-map loop device
+        ex(CRYPTSETUP % (loopdev, basefile), passphrase)
+    except (KeyboardInterrupt, ExecError), e:
+        if isinstance(e, ExecError): 
+            print >>sys.stderr, e
+        try:
+            # Detach loop device
+            ex(UNLOSETUP % loopdev)
+        except ExecError, e:
+            print >>sys.stderr, e
+
+        return
+
+    try:
+        # Make filesystem
+        ex('/sbin/mkfs.ext2 /dev/mapper/%s' % basefile)
+    except ExecError, e:
+        print >>sys.stderr, e
+        
+        try:
+            # Device-unmap loop device
+            ex(UNCRYPTSETUP % basefile)
+
+            # Detach loop device
+            ex(UNLOSETUP % loopdev)
+        except ExecError, e:
+            print >>sys.stderr, e
+        
+        return
+
+    try:
+        mp = mkmp(basefile, loopdev)
+    except CryptError:
+        return
+
+    try:
+        mntfs(basefile, loopdev, mp)
+    except CryptError:
+        return
+
+    return passphrase
+
 def main():
     # Arguments
     parser = argparse.ArgumentParser()
@@ -253,10 +344,12 @@ def main():
     parser.add_argument('-r', '--read-only', action='store_true', help=RHELP)
     parser.add_argument('-u', '--umount', dest='mountpoint', nargs='+',
                         help=UHELP, default=[])
+    parser.add_argument('-c', '--create', nargs=2, metavar=('FILE', 'SIZE'),
+                        help=CHELP)
     args = parser.parse_args()
 
     # Start shell if no arguments
-    if not args.file and not args.mountpoint:
+    if not args.file and not args.mountpoint and not args.create:
         cli = Cli()
         while True:
             try:
@@ -274,11 +367,20 @@ def main():
     if not exists:
         return 1
 
-    # Mount Actions
+    # Mount
     mount(args.file, args.read_only)
 
-    # Umount Actions
+    # Umount
     umount(args.mountpoint)
+
+    # Create
+    if args.create:
+        try:
+            create(*args.create)
+        except ValueError, e:
+            msg = "mnt: error: argument -c/--create: invalid int value for SIZE"
+            print >>sys.stderr, msg
+            return 1
 
 if __name__ == '__main__':
     sys.exit(main())
