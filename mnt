@@ -167,6 +167,16 @@ class Cli(cmd.Cmd):
         self.passphrase = create(args.file, args.size, self.passphrase)
         signal.alarm(60 * 60) # Forget passphrase after 1 hour
 
+    def complete_create(self, text, line, begidx, endidx):
+        args = shlex.split(line)
+        if len(args) > 1:
+            return filecomp(args, text)
+        else:
+            return [e for e in os.listdir('.')]
+
+    def help_create(self):
+        self.pc.print_help() 
+
     def do_EOF(self, _):
         print
         sys.exit(0)
