@@ -17,7 +17,7 @@ UNLOSETUP = '/sbin/losetup -d %s'
 CRYPTSETUP = '/sbin/cryptsetup -T 1 -d - luksOpen %s %s'
 UNCRYPTSETUP = '/sbin/cryptsetup luksClose %s'
 MHELP = "mount FILE's filesystem"
-RHELP = "mount filesystem read-only"
+WHELP = "mount filesystem read/write"
 UHELP = "umount filesystem from MOUNTPOINT"
 CHELP = "create SIZE MB filesystem in FILE"
 
@@ -47,10 +47,10 @@ def mkmp(basefile, loopdev):
 
     return mp
 
-def mntfs(basefile, loopdev, mp, read_only=False):
+def mntfs(basefile, loopdev, mp, read_write=False):
     try:
         # Mount the now decrypted file system
-        ro = '-r' if read_only else ''
+        ro = '' if read_write else '-r'
         ex('/bin/mount %s /dev/mapper/%s %s' % (ro, basefile, mp))
     except ExecError, e:
         print >>sys.stderr, e
@@ -101,8 +101,8 @@ class Cli(cmd.Cmd):
 
         self.pm = argparse.ArgumentParser()
         self.pm.add_argument(dest='file', nargs='+', help=MHELP)
-        self.pm.add_argument('-r', '--read-only', action='store_true',
-                             help=RHELP)
+        self.pm.add_argument('-w', '--read-write', action='store_true',
+                             help=WHELP)
 
         self.pu = argparse.ArgumentParser()
         self.pu.add_argument(dest='mountpoint', nargs='+', help=UHELP)
@@ -125,7 +125,7 @@ class Cli(cmd.Cmd):
             args = self.pm.parse_args(shlex.split(line))
         except SystemExit:
             return
-        self.passphrase = mount(args.file, args.read_only, self.passphrase)
+        self.passphrase = mount(args.file, args.read_write, self.passphrase)
         signal.alarm(60 * 60) # Forget passphrase after 1 hour
 
     def complete_mount(self, text, line, begidx, endidx):
@@ -189,7 +189,7 @@ def ex(cmd, input=None):
         raise ExecError('[%s] %s' % (os.path.basename(args[0]), out[:-1]))
     return stdout, stderr
 
-def mount(files, read_only, passphrase=None):
+def mount(files, read_write, passphrase=None):
     for i, f in enumerate([expanduser(f) for f in files]):
         # Set unique basefile 
         basefile = os.path.basename(os.path.abspath(f))
@@ -234,7 +234,7 @@ def mount(files, read_only, passphrase=None):
             return
 
         try:
-            mntfs(basefile, loopdev, mp, read_only)
+            mntfs(basefile, loopdev, mp, read_write)
         except CryptError:
             return
 
@@ -357,7 +357,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--mount', dest='file', nargs='+', help=MHELP,
                         default=[])
-    parser.add_argument('-r', '--read-only', action='store_true', help=RHELP)
+    parser.add_argument('-w', '--read-write', action='store_true', help=WHELP)
     parser.add_argument('-u', '--umount', dest='mountpoint', nargs='+',
                         help=UHELP, default=[])
     parser.add_argument('-c', '--create', nargs=2, metavar=('FILE', 'SIZE'),
@@ -384,7 +384,7 @@ def main():
         return 1
 
     # Mount
-    mount(args.file, args.read_only)
+    mount(args.file, args.read_write)
 
     # Umount
     umount(args.mountpoint)
