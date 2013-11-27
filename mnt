@@ -12,6 +12,7 @@ import errno
 import signal
 from getpass import getpass
 import itertools
+import ConfigParser
 
 UNLOSETUP = '/sbin/losetup -d %s'
 CRYPTSETUP = '/sbin/cryptsetup -T 1 -d - luksOpen %s %s'
@@ -95,9 +96,11 @@ def filecomp(args, text):
             if e.startswith(text)]
 
 class Cli(cmd.Cmd):
-    def __init__(self):
+    def __init__(self, timeout):
         cmd.Cmd.__init__(self)
         self.prompt = 'mnt% '
+
+        self.timeout = timeout
 
         self.pm = argparse.ArgumentParser()
         self.pm.add_argument(dest='file', nargs='+', help=MHELP)
@@ -126,7 +129,7 @@ class Cli(cmd.Cmd):
         except SystemExit:
             return
         self.passphrase = mount(args.file, args.read_write, self.passphrase)
-        signal.alarm(60 * 60) # Forget passphrase after 1 hour
+        signal.alarm(self.timeout) # Forget passphrase after some time
 
     def complete_mount(self, text, line, begidx, endidx):
         # For some reason 'text' drops words by slash
@@ -374,9 +377,17 @@ def main():
                         help=CHELP)
     args = parser.parse_args()
 
+    # Config
+    config = ConfigParser.SafeConfigParser()
+    config.read(expanduser('~/.mnt.cfg'))
+    try:
+        timeout = config.getint('security', 'timeout')
+    except (ConfigParser.NoSectionError, ConfigParser.NoOptionError):
+        timeout = 43200
+
     # Start shell if no arguments
     if not args.file and not args.mountpoint and not args.create:
-        cli = Cli()
+        cli = Cli(timeout)
         while True:
             try:
                 cli.cmdloop()
