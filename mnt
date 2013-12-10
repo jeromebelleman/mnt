@@ -84,7 +84,7 @@ def losetup(path):
 
     return loopdev
 
-class Cli(cli.Cli):
+class Mnt(cli.Cli):
     def __init__(self, timeout):
         cli.Cli.__init__(self)
 
@@ -316,12 +316,7 @@ def main():
 
     # Start shell if no arguments
     if not args.file and not args.mountpoint and not args.create:
-        cli = Cli(timeout)
-        while True:
-            try:
-                cli.cmdloop()
-            except KeyboardInterrupt:
-                print
+        Mnt(timeout).loop()
 
     # Sanitise input
     exists = True
