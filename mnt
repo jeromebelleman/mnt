@@ -1,12 +1,12 @@
 #! /usr/bin/env python
 
 import os
-from os.path import dirname, expanduser
+from os.path import expanduser
 import sys
 import subprocess as sp
 import argparse
 import shlex
-import cmd
+import cli
 import re
 import errno 
 import signal
@@ -84,35 +84,23 @@ def losetup(path):
 
     return loopdev
 
-def filetype(path, e):
-    if os.path.isdir(expanduser(path + '/' + e)):
-        return e + '/'
-    else:
-        return e
-
-def filecomp(args, text):
-    path = dirname(args[-1]) if dirname(args[-1]) else '.'
-    return [filetype(path, e) for e in os.listdir(expanduser(path))
-            if e.startswith(text)]
-
-class Cli(cmd.Cmd):
+class Cli(cli.Cli):
     def __init__(self, timeout):
-        cmd.Cmd.__init__(self)
-        self.prompt = 'mnt% '
+        cli.Cli.__init__(self)
 
         self.timeout = timeout
 
-        self.pm = argparse.ArgumentParser()
-        self.pm.add_argument(dest='file', nargs='+', help=MHELP)
-        self.pm.add_argument('-w', '--read-write', action='store_true',
-                             help=WHELP)
+        self.mountparser.add_argument(dest='file', nargs='+')
+        self.mountparser.add_argument('-w', '--read-write', action='store_true',
+                                      help=WHELP)
+        self.mountparser.description = MHELP
 
-        self.pu = argparse.ArgumentParser()
-        self.pu.add_argument(dest='mountpoint', nargs='+', help=UHELP)
+        self.umountparser.add_argument(dest='mountpoint', nargs='+')
+        self.umountparser.description = UHELP
 
-        self.pc = argparse.ArgumentParser(description=CHELP)
-        self.pc.add_argument(dest='file')
-        self.pc.add_argument(dest='size')
+        self.createparser.add_argument(dest='file')
+        self.createparser.add_argument(dest='size')
+        self.createparser.description = CHELP
 
         self.passphrase = None
         signal.signal(signal.SIGALRM, self.handler)
@@ -120,75 +108,16 @@ class Cli(cmd.Cmd):
     def handler(self, signum, frame):
         self.passphrase = None
 
-    def emptyline(self):
-        pass
-
-    def do_mount(self, line):
-        try:
-            args = self.pm.parse_args(shlex.split(line))
-        except SystemExit:
-            return
+    def run_mount(self, args):
         self.passphrase = mount(args.file, args.read_write, self.passphrase)
         signal.alarm(self.timeout) # Forget passphrase after some time
 
-    def complete_mount(self, text, line, begidx, endidx):
-        # For some reason 'text' drops words by slash
-        # FIXME Complete from current word rather than last word
-        args = shlex.split(line)
-        if len(args) > 1:
-            return filecomp(args, text)
-        else:
-            return [e for e in os.listdir('.')]
-
-    def help_mount(self):
-       self.pm.print_help() 
-
-    def do_umount(self, line):
-        try:
-            args = self.pu.parse_args(shlex.split(line))
-        except SystemExit:
-            return
+    def run_umount(self, args):
         umount(args.mountpoint)
 
-    def complete_umount(self, text, line, begidx, endidx):
-        # For some reason 'text' drops words by slash
-        # FIXME Complete from current word rather than last word
-        args = shlex.split(line)
-        if len(args) > 1:
-            return filecomp(args, text)
-        else:
-            return ['/media/' + e for e in os.listdir('/media')]
-
-    def help_umount(self):
-       self.pu.print_help() 
-
-    def do_create(self, line):
-        try:
-            args = self.pc.parse_args(shlex.split(line))
-        except SystemExit:
-            return
+    def run_create(self, args):
         self.passphrase = create(args.file, args.size, self.passphrase)
         signal.alarm(60 * 60) # Forget passphrase after 1 hour
-
-    def complete_create(self, text, line, begidx, endidx):
-        args = shlex.split(line)
-        if len(args) > 1:
-            return filecomp(args, text)
-        else:
-            return [e for e in os.listdir('.')]
-
-    def help_create(self):
-        self.pc.print_help() 
-
-    def do_EOF(self, _):
-        print
-        sys.exit(0)
-
-    def help_EOF(self):
-        print "Exit"
-
-    def help_help(self):
-        print "Display help"
 
 def ex(cmd, input=None):
     args = shlex.split(cmd)
