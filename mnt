@@ -21,6 +21,7 @@ MHELP = "mount FILE's filesystem"
 WHELP = "mount filesystem read/write"
 UHELP = "umount filesystem from MOUNTPOINT"
 CHELP = "create SIZE MB filesystem in FILE"
+NOSPACE = 'No space left on device'
 
 class ExecError(Exception):
     pass
@@ -233,11 +234,14 @@ def umount(args):
 def create(args, passphrase=None):
     try:
         # Fill new file with random data
-        ex('/bin/dd if=/dev/urandom of=%s bs=1M count=%d' % \
-            (args.filepath, args.size))
+        count = ' count=%d' % args.size if args.size else ''
+        ex('/bin/dd if=/dev/urandom of=%s bs=1M' % args.filepath + count)
     except ExecError, e:
-        print >>sys.stderr, e
-        return
+        # It's OK to run out of space if there's no size specified as it
+        # probably means we're trying to fill up a block device to the brim.
+        if not args.size and NOSPACE not in e.message:
+            print >>sys.stderr, e
+            return
 
     try:
         loopdev = losetup(args.filepath)
