@@ -90,16 +90,17 @@ class Mnt(cli.Cli):
 
         self.timeout = timeout
 
-        self.mountparser.add_argument(dest='file', nargs='+')
+        self.mountparser.add_argument(metavar='FILE', dest='files', nargs='+')
         self.mountparser.add_argument('-w', '--read-write', action='store_true',
                                       help=WHELP)
         self.mountparser.description = MHELP
 
-        self.umountparser.add_argument(dest='mountpoint', nargs='+')
+        self.umountparser.add_argument(metavar='MOUNTPOINT', dest='mountpoints',
+                                       nargs='+')
         self.umountparser.description = UHELP
 
-        self.createparser.add_argument(dest='file')
-        self.createparser.add_argument(dest='size')
+        self.createparser.add_argument(metavar='FILE', dest='filepath')
+        self.createparser.add_argument('-s', '--size', type=int)
         self.createparser.description = CHELP
 
         self.passphrase = None
@@ -109,14 +110,14 @@ class Mnt(cli.Cli):
         self.passphrase = None
 
     def run_mount(self, args):
-        self.passphrase = mount(args.file, args.read_write, self.passphrase)
+        self.passphrase = mount(args, self.passphrase)
         signal.alarm(self.timeout) # Forget passphrase after some time
 
     def run_umount(self, args):
-        umount(args.mountpoint)
+        umount(args)
 
     def run_create(self, args):
-        self.passphrase = create(args.file, args.size, self.passphrase)
+        self.passphrase = create(args, self.passphrase)
         signal.alarm(60 * 60) # Forget passphrase after 1 hour
 
 def ex(cmd, input=None):
@@ -131,8 +132,8 @@ def ex(cmd, input=None):
         raise ExecError('[%s] %s' % (os.path.basename(args[0]), out[:-1]))
     return stdout, stderr
 
-def mount(files, read_write, passphrase=None):
-    for i, f in enumerate([expanduser(f) for f in files]):
+def mount(args, passphrase=None):
+    for i, f in enumerate([expanduser(f) for f in args.files]):
         # Set unique basefile 
         basefile = os.path.basename(os.path.abspath(f))
         j, suffix = 0, ''
@@ -176,14 +177,14 @@ def mount(files, read_write, passphrase=None):
             return
 
         try:
-            mntfs(basefile, loopdev, mp, read_write)
+            mntfs(basefile, loopdev, mp, args.read_write)
         except CryptError:
             return
 
     return passphrase
 
-def umount(mountpoints):
-    for f in mountpoints:
+def umount(args):
+    for f in args.mountpoints:
         basefile = os.path.basename(os.path.abspath(f))
 
         # Find out which loop device we're dealing with
@@ -229,20 +230,21 @@ def umount(mountpoints):
             print >>sys.stderr, e
             return 1
 
-def create(path, size, passphrase=None):
+def create(args, passphrase=None):
     try:
         # Fill new file with random data
-        ex('/bin/dd if=/dev/urandom of=%s bs=1M count=%d' % (path, int(size)))
+        ex('/bin/dd if=/dev/urandom of=%s bs=1M count=%d' % \
+            (args.filepath, args.size))
     except ExecError, e:
         print >>sys.stderr, e
         return
 
     try:
-        loopdev = losetup(path)
+        loopdev = losetup(args.filepath)
     except CryptError:
         return
 
-    basefile = os.path.basename(os.path.abspath(path))
+    basefile = os.path.basename(os.path.abspath(args.filepath))
 
     try:
         # Prompt and store passphrase
@@ -295,17 +297,6 @@ def create(path, size, passphrase=None):
     return passphrase
 
 def main():
-    # Arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-m', '--mount', dest='file', nargs='+', help=MHELP,
-                        default=[])
-    parser.add_argument('-w', '--read-write', action='store_true', help=WHELP)
-    parser.add_argument('-u', '--umount', dest='mountpoint', nargs='+',
-                        help=UHELP, default=[])
-    parser.add_argument('-c', '--create', nargs=2, metavar=('FILE', 'SIZE'),
-                        help=CHELP)
-    args = parser.parse_args()
-
     # Config
     config = ConfigParser.SafeConfigParser()
     config.read(expanduser('~/.mnt.cfg'))
@@ -314,34 +305,32 @@ def main():
     except (ConfigParser.NoSectionError, ConfigParser.NoOptionError):
         timeout = 43200
 
-    # Start shell if no arguments
-    if not args.file and not args.mountpoint and not args.create:
+    # Arguments
+    if len(sys.argv) > 1:
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers()
+
+        mountparser = subs.add_parser('mount', help=MHELP)
+        mountparser.add_argument(metavar='FILE', dest='files', nargs='+')
+        mountparser.add_argument('-w', '--read-write', action='store_true',
+                                 help=WHELP)
+        mountparser.set_defaults(func=mount)
+
+        umountparser = subs.add_parser('umount', help=UHELP)
+        umountparser.add_argument(metavar='MOUNTPOINT', dest='mountpoints',
+                                  nargs='+')
+        umountparser.set_defaults(func=umount)
+
+        createparser = subs.add_parser('create', help=CHELP)
+        createparser.add_argument(metavar='FILE', dest='filepath')
+        createparser.add_argument('-s', '--size', type=int)
+        createparser.set_defaults(func=create)
+
+        args = parser.parse_args()
+
+        args.func(args)
+    else:
         Mnt(timeout).loop()
-
-    # Sanitise input
-    exists = True
-    for i in args.file + args.mountpoint:
-        if not os.path.exists(i):
-            strerr = os.strerror(errno.ENOENT)
-            print >>sys.stderr, '%s: %s' % (i, strerr)
-            exists = False
-    if not exists:
-        return 1
-
-    # Mount
-    mount(args.file, args.read_write)
-
-    # Umount
-    umount(args.mountpoint)
-
-    # Create
-    if args.create:
-        try:
-            create(*args.create)
-        except ValueError, e:
-            msg = "mnt: error: argument -c/--create: invalid int value for SIZE"
-            print >>sys.stderr, msg
-            return 1
 
 if __name__ == '__main__':
     sys.exit(main())
