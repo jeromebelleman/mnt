@@ -87,7 +87,7 @@ def losetup(path):
 
 class Mnt(cli.Cli):
     def __init__(self, timeout):
-        cli.Cli.__init__(self)
+        cli.Cli.__init__(self, bell=True)
 
         self.timeout = timeout
 
