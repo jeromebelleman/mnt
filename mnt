@@ -20,7 +20,7 @@ UNCRYPTSETUP = '/sbin/cryptsetup luksClose %s'
 MHELP = "mount FILE's filesystem"
 WHELP = "mount filesystem read/write"
 UHELP = "umount filesystem from MOUNTPOINT"
-CHELP = "create SIZE MB filesystem in FILE"
+CHELP = "create SIZE MB filesystem in FILE (at least 4)"
 NOSPACE = 'No space left on device'
 
 class ExecError(Exception):
